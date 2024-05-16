@@ -1,0 +1,2668 @@
+---
+title: 'Data Fusion and Analysis of Brazilian E-commerce and Marketing Funnel Datasets'
+author: Mageshwari PV
+date: ""
+# output:
+#   beamer_presentation:
+#     theme: Boadilla
+#     colortheme: dolphin
+#     fonttheme: structurebold
+#     slide_level: 2
+# classoption: t
+output: 
+  pdf_document: 
+    toc: yes
+    number_sections: yes
+header-includes:
+    - \usepackage{hyperref}
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,comment=NA,attr.source='.numberLines', fig.pos = 'H',out.extra = "")
+
+rm(list=ls())
+library(readr)
+library(RSQLite)
+library(dplyr)
+library(knitr)
+library(kableExtra)
+library(tidyverse)
+library(stringi)
+library(lubridate)
+library(RColorBrewer)
+library(gridExtra)
+library(scales)
+library(grid)
+```
+
+\newpage
+
+
+# Introduction
+
+In today’s digital world, data has become an essential part of every organization's decision-making process. E-commerce organizations, in particular, deal with large amounts of data from various sources, such as customer transactions, website interactions, and social media platforms. The analysis of this data can provide valuable insights into consumer behaviour, market trends, and potential growth opportunities. Likewise, the report's goal is to complete the process of extracting, refining, and delivering the Olist dataset, which is a collection of orders placed between 2016 and 2018 on the Olist Store, a Brazilian ecommerce company. Along with this, Marketing Qualified Leads data is provided, which contains information on the MQL requests received by Olist from 2017 to 2018. To explore these datasets, this report employs the reverse engineering of the database and explores data using data management techniques such as SQL DDL, Entity Relationship Diagrams, Normalization, and SQL Queries.  
+
+## Setting up database connection
+```{r defineconnection}
+my_connection <- RSQLite::dbConnect(RSQLite::SQLite(),"DM_assignment.db")
+```
+
+
+# A1: Identification of entities, relationships, cardinalities and attributes and any assumptions related to the pre-normalized datasets. 
+
+## Assumptions
+We have a few key assumptions regarding these datasets. They are as follows: \
+A. Although the relationship between customers and orders appears 1:1 we believe it is actually 1:N, as there is nothing stopping a customer from ordering again. \
+B. Every customer is a separate customer even if they belong to the same household. \
+C. A zip code should uniquely identify one city, and one state. \
+D. We cannot identify a state, with a city name. \
+
+## Identifying keys
+
+To define the primary key for each table, the first column is chosen to check if suitable for being the primary key (Appendix 10.1). After that, 7 out of 11 tables identified the primary key. Only four tables contain duplicate values in each row in the first column, meaning the primary key will consist of two or more columns to be a composite key. Comparing the first column with additional columns using the group by function to get a combination of more than one column that uniquely identifies any record. To create and enforce a connection between the information in two tables, foreign keys were identified as non-primary key columns in one table that were the primary key in a different table. In next section, we have provided a summary of our findings. 
+
+
+```{r ,message=FALSE,warning=FALSE, include=FALSE,attr.source='.numberLines'}
+
+input_files <- list.files(pattern="*.csv")
+
+prefix <- "olist_"
+suffix1 <- "_dataset.csv"
+suffix2 <- ".csv"
+
+table_name_list <- list() 
+
+df_keys <- setNames(data.frame(matrix(ncol = 4, nrow = 0)), 
+                    c("file_name", "col_name", "num_unique",
+                      "total_rows"))
+
+df_info <-  setNames(data.frame(matrix(ncol = 4, nrow = 0)), 
+                     c("file_name", "number_columns",
+                       "number_rows","first_col_primary_key"))
+
+
+for (file_name in input_files) {
+  this_file_contents <- readr::read_csv(file_name)
+  #ensure no duplicates
+  this_file_contents <- distinct(this_file_contents)
+  number_of_rows <- nrow(this_file_contents)
+  number_of_columns <- ncol(this_file_contents)
+
+
+  df_info[nrow(df_info)+1, 1] <- file_name
+  df_info[nrow(df_info), 2] <- number_of_columns
+  df_info[nrow(df_info), 3] <- number_of_rows
+  df_info[nrow(df_info), 4] <- nrow(unique(this_file_contents[,1]))==number_of_rows
+
+    for (i in 1:ncol(this_file_contents)){
+        df_keys[nrow(df_keys) + 1,1] <- file_name
+        df_keys[nrow(df_keys),2] <- colnames(this_file_contents[,i])
+    df_keys[nrow(df_keys), 3] <- nrow(unique(this_file_contents[,i]))
+    df_keys[nrow(df_keys), 4] <- nrow(this_file_contents)
+
+    } 
+  }
+
+```
+
+
+
+
+## Entities and their attributes
+Primary Keys are bolded, foreign keys are in italics.
+
+### orders table
+orders (**order_id**, order_status, order_purchase_time, _customer_id_, order_delivered_carrier_date, order_approved_at, order_estimated_delivery_date, order_delivered_customer_date) 
+
+### order_payment table
+order_payment(**(_order_id_, payment_sequential)**, payment_type, payment_value, payment_instalment) 
+
+### order_review table
+order_reviews(**(_order_id_, review_id)**, review_score, review_comment_title, review_comment_message, review_creation_aate, review_answer_timestamp)
+
+### order_items table
+order_items(**(_order_id_, order_item_id,)**, _product_id_, _seller_id_, shipping_limit, price_freight_value) 
+
+### products table
+products(**product_id**, product_weight_g, product_length_cm, product_height_cm, product_photos_quantity, product_width_cm, product_name_length, product_description_length, _product_category_name_) 
+
+### product_category_name_translation table
+product_category_name_translation(**product_category_name**, product_category_name_english)
+
+### customers table
+customers(**customer_id**, customer_unique_id, city, state, _customer_zip_code_prefix_)
+
+### sellers table
+sellers(**seller_id**, seller_city, seller_state, _seller_zip_code_prefix_) 
+
+### geolocation table
+geolocation(**(_geolocation_zip_code_prefix_, geolocation_lat, geolocation_lng, geolocation_city, geolocation_state)**)
+
+### closed_deals table
+closed_deals(**mql_id**, sr_id, sdr_id, average_stock, _seller_id_, lead_type, business_segments, declared_monthly_revenue, has_company, business_type, declared_product_catalog_size, gas_gtin, won_date, lead_behaviour_profile)
+
+### marketing_qualified_leads table
+marketing_qualified_leads(origin, **(mql_id, landing_page_id)**, first_contact_date)
+
+\newpage
+
+## Relationships and cardinalities 
+
+| Table 1 | Table 2 | Relationship | Explanation |
+| :------ | :------ | :----------: | :---------- |
+| Customer | Orders | 1:N | A customer can place multiple orders. |
+| |
+| Marketing qualified leads | Closed deals | 1:1 | Every marketing qualified lead has led at most one closed deal for the company with a seller being onboarded. |
+| |
+| Closed deals | Sellers | 1:1 | Every closed deal is associated with exactly one new seller. |
+| |
+| Customers | Geolocation | M:N | A customer can have multiple geolocations such as home and workplace. Furthermore, a given geolocation may contain a multitude of customers, such as colleagues working at the same organization. |
+| |
+| Order items | Orders| N:1 | An order can contain many items/products. |
+| |
+| Order items | Product | N:1 |  A product can be ordered several times. |
+| |
+| Order Payments | Orders | N: 1 | Payments for an order can be made with multiple partial payments. |
+| |
+| Order Reviews | Orders | M:N | An order can contain multiple reviews and a review can be made for multiple orders. |
+| |
+| Products | Product Category name translation | N:1 | An order can contain multiple reviews and a review can be made for multiple orders. |
+| |
+| Sellers | Geolocation | M:N | A seller can be located in multiple locations and a location can have multiple sellers. |
+| |
+| Order items | Sellers | N:1 | A seller can have fulfill multiple orders/order items.|
+
+
+
+
+ 
+\newpage
+
+# A2: An E-R Diagram of the relationship as well as relationship sets for each pair: 
+
+## E-R Diagram
+```{r , echo=FALSE, fig.cap="Pre-Normalistion ER", out.width = '100%'}
+
+knitr::include_graphics("PreNormER.jpg")
+
+```
+
+\newpage
+
+## Relationship sets 
+
+| Entity 1 | Entity 2 | Cardinality | Relationship |
+| :------- | :------- | :----------: | :---------- |
+| Customers | Orders | 1:N | Places/Placed by|
+| |
+| Orders | Order items | 1:N | Contains |
+| |
+| Order items | Products| N:1 | Belongs to |
+| |
+| Orders | Order Payments | 1:N | Pays/Transacts |
+| |
+| Orders | Order review | M:N | Receives/ Has |
+| |
+| Sellers | Order Items | 1:N | Sells |
+| |
+| Sellers | Geo Location | M:N | Located in |
+| |
+| Customers | Geo Location | M:N | Located in |
+| |
+| Sellers | Closed Deals | 1:1 | Associated with |
+| |
+| Closed Deals | Marketing Qualifies Deals | 1:1 | Led to |
+| |
+| Product | Product Category Name | N:1 | Defines |
+
+
+\newpage
+
+# A3: SQL DDL
+
+## customers
+```{sql, connection=my_connection}
+
+CREATE TABLE IF NOT EXISTS 'customers' (
+  'customer_id' VARCHAR(32) PRIMARY KEY,
+  'customer_unique_id' VARCHAR(32) NOT NULL,
+  'customer_zip_code_prefix' VARCHAR(5) NOT NULL,
+  'customer_city' VARCHAR(100) NOT NULL,
+  'customer_state' VARCHAR(2) NOT NULL
+);
+```
+
+## orders
+```{sql, connection=my_connection}
+CREATE TABLE IF NOT EXISTS 'orders' (
+  'order_id' VARCHAR(32) PRIMARY KEY,
+  'customer_id' VARCHAR(32) NOT NULL,
+  'order_status' VARCHAR(20) NOT NULL,
+  'order_purchase_timestamp' TIMESTAMP NOT NULL,
+  'order_approved_at' TIMESTAMP,
+  'order_delivered_carrier_date' TIMESTAMP,
+  'order_delivered_customer_date' TIMESTAMP,
+  'order_estimated_delivery_date' DATE,
+  FOREIGN KEY ('customer_id') REFERENCES customers('customer_id')
+);
+```
+
+## order_items
+```{sql, connection=my_connection}
+
+CREATE TABLE IF NOT EXISTS 'order_items' (
+  'order_id' VARCHAR(32) NOT NULL,
+  'order_item_id' INT NOT NULL,
+  'product_id' VARCHAR(32) NOT NULL,
+  'seller_id' VARCHAR(32) NOT NULL,
+  'shipping_limit_date' TIMESTAMP NOT NULL,
+  'price' DECIMAL(10, 2) NOT NULL,
+  'freight_value' DECIMAL(10, 2) NOT NULL,
+  PRIMARY KEY ('order_id', 'order_item_id'),
+  FOREIGN KEY ('product_id') REFERENCES products('product_id'),
+  FOREIGN KEY ('seller_id') REFERENCES sellers('seller_id'),
+  FOREIGN KEY ('order_id') REFERENCES orders('order_id')
+
+);
+```
+
+## product_category_name_translation
+```{sql, connection=my_connection}
+CREATE TABLE IF NOT EXISTS 'product_category_name_translation' (
+  'product_category_name' VARCHAR(100) PRIMARY KEY,
+  'product_category_name_english' VARCHAR(100)
+)
+```
+
+## products
+```{sql, connection=my_connection}
+CREATE TABLE  IF NOT EXISTS 'products' (
+  'product_id' VARCHAR(32) PRIMARY KEY,
+  'product_category_name' VARCHAR(100),
+  'product_name_lenght' INT,
+  'product_description_lenght' INT,
+  'product_photos_qty' INT,
+  'product_weight_g' INT,
+  'product_length_cm' INT,
+  'product_height_cm' INT,
+  'product_width_cm' INT,
+  FOREIGN KEY ('product_category_name') 
+  REFERENCES product_category_name_translation('product_category_name')
+);
+```
+
+## sellers
+```{sql, connection=my_connection}
+CREATE TABLE IF NOT EXISTS 'sellers' (
+  'seller_id' VARCHAR(32) PRIMARY KEY,
+  'seller_zip_code_prefix' VARCHAR(5) NOT NULL,
+  'seller_city' VARCHAR(100) NOT NULL,
+  'seller_state' VARCHAR(2) NOT NULL
+);
+```
+
+## order_payments
+```{sql, connection=my_connection}
+CREATE TABLE IF NOT EXISTS 'order_payments' (
+  'order_id' VARCHAR(32) NOT NULL,
+  'payment_sequential' INT NOT NULL,
+  'payment_type' VARCHAR(50) NOT NULL,
+  'payment_installments' INT NOT NULL,
+  'payment_value' DECIMAL(10, 2) NOT NULL,
+  PRIMARY KEY ('order_id', 'payment_sequential'),
+  FOREIGN KEY ('order_id') REFERENCES orders('order_id')
+);
+```
+
+## order_reviews
+```{sql, connection=my_connection}
+CREATE TABLE IF NOT EXISTS 'order_reviews' (
+  'review_id' VARCHAR(32) NOT NULL,
+  'order_id' VARCHAR(32) NOT NULL,
+  'review_score' INT NOT NULL,
+  'review_comment_title' VARCHAR(100),
+  'review_comment_message' TEXT,
+  'review_creation_date' TIMESTAMP NOT NULL,
+  'review_answer_timestamp' TIMESTAMP NOT NULL,
+  PRIMARY KEY ('review_id', 'order_id'),
+  FOREIGN KEY ('order_id') REFERENCES orders('order_id')
+);
+```
+
+## geolocation
+```{sql, connection=my_connection}
+CREATE TABLE IF NOT EXISTS 'geolocation' (
+  'geolocation_zip_code_prefix' VARCHAR(5) NOT NULL,
+  'geolocation_lat' DECIMAL(3, 15) NOT NULL,
+  'geolocation_lng' DECIMAL(3, 15) NOT NULL,
+  'geolocation_city' VARCHAR(100) NOT NULL,
+  'geolocation_state' VARCHAR(2) NOT NULL,
+  PRIMARY KEY ('geolocation_zip_code_prefix' ,'geolocation_lat',
+  'geolocation_lng', 'geolocation_city' ,'geolocation_state')
+);
+```
+
+## marketing_qualified_leads
+```{sql, connection=my_connection}
+CREATE TABLE IF NOT EXISTS 'marketing_qualified_leads' (
+  'mql_id' VARCHAR(32) PRIMARY KEY,
+  'first_contact_date' DATE NOT NULL,
+  'landing_page_id' VARCHAR(32) NOT NULL,
+  'origin' VARCHAR(100)
+);
+```
+
+## closed_deals
+```{sql, connection=my_connection}
+CREATE TABLE IF NOT EXISTS 'closed_deals' (
+  'mql_id' VARCHAR(32) PRIMARY KEY,
+  'seller_id' VARCHAR(32) NOT NULL,
+  'sdr_id' VARCHAR(32) NOT NULL,
+  'sr_id' VARCHAR(32) NOT NULL,
+  'won_date' TIMESTAMP,
+  'business_segment' VARCHAR(200),
+  'lead_type' VARCHAR(200),
+  'lead_behaviour_profile' VARCHAR(200),
+  'has_company' BOOL,
+  'has_gtin' BOOL,
+  'average_stock' VARCHAR(10),
+  'business_type' VARCHAR(100),
+  'declared_product_catalog_size' INT,
+  'declared_monthly_revenue' INT NOT NULL,
+  FOREIGN KEY ('seller_id') REFERENCES 'sellers'('seller_id')
+);
+
+```
+
+```{r warning=FALSE,error=FALSE,message=FALSE,attr.source='.numberLines'}
+for (file_name in input_files) {
+  this_file_contents <- readr::read_csv(file_name)
+  #Remove prefix and suffix 
+  table_name <- gsub(prefix,"",file_name)
+  table_name <- gsub(suffix1,"",table_name)
+  table_name <- gsub(suffix2,"",table_name)
+  table_name_list <- append(table_name_list, table_name)
+  #ensure no duplicates
+  this_file_contents <- distinct(this_file_contents)
+  RSQLite::dbWriteTable(my_connection,table_name,
+                        this_file_contents,append=TRUE)
+}
+
+```
+
+\newpage
+
+# A4: Identification of problems with the data records including empty values, issues with columns and duplicates.
+
+### Empty values & Duplicates
+
+```{r ,message=FALSE,warning=FALSE, include=FALSE}
+df_issues <- setNames(data.frame(matrix(ncol = 3, nrow = 0)), 
+                      c("file_name", "NA_count", "duplicates_count"))
+
+for (file_name in input_files) {
+  this_file_contents <- readr::read_csv(file_name)
+  #ensure no duplicates
+  df_issues[nrow(df_issues)+1, 1] <- file_name
+  df_issues[nrow(df_issues), 2] <- sum(is.na(this_file_contents))
+  df_issues[nrow(df_issues), 3] <- sum(duplicated(this_file_contents))
+  }
+```
+
+```{r,message=FALSE,warning=FALSE, echo=FALSE}
+kable(df_issues, format = "latex", row.names = FALSE, 
+      caption= "A4", format.args = list(big.mark = ","), digits = 2)%>%
+  kable_styling(position = "left",
+      latex_options = c("repeat_header", "HOLD_position"))
+```
+The NA values were identified in 5 data sets, namely marketing qualified leads, closed deals, products, orders, and order reviews, while  punctuations like a dot or comma are spotted from the order reviews data sets instead of empty values.
+Additionally, duplicates are not identified in the datasets except geolocation. 
+
+### Issues with columns
+
+```{r ,message=FALSE,warning=FALSE, include=FALSE}
+geolocation_df <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM geolocation; ")
+sellers_df <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM sellers")
+customer_df <- RSQLite::dbGetQuery(my_connection,
+"SELECT *FROM customers; ")
+df_example <- head(distinct(geolocation_df, geolocation_city),10)
+```
+
+```{r}
+print(paste0("Geolocation has ", 
+             sum(grepl('[^[:punct:]]', geolocation_df$geolocation_city))
+             , " punction characters in the city column"))
+```
+
+```{r}
+print(paste0("Sellers has ",
+             sum(grepl('[^[:punct:]]', sellers_df$seller_city))
+             , " punction characters in the city column"))
+```
+
+```{r,message=FALSE,warning=FALSE, echo=FALSE}
+kable(df_example, format = "latex",row.names = FALSE, 
+      caption= "A4 - Issues with City name examples", 
+      format.args = list(big.mark = ","), digits = 2)%>%
+  kable_styling(position = "center",
+      latex_options = c("HOLD_position"))
+```
+
+In the geolocation dataset, we found inconsistency with city name such as sao paulo and são paulo. The same issue is detected in sellers dataset, where some entries contain both city name and state (e.g., ‘lages – sc’), or more than 1 city name (e.g., santo andre/ sao paulo). We also found 2 error values in sellers dataset (e.g., 04482255). 
+In order to address these issues, data cleaning is performed before normalisation, where empty values are imputed or dropped and duplicates are removed from the database. Further, the 'zip code' column contains leading zeros, which must be stored as a string to preserve the leading zeros. The codes are represented in Appendix 10.2
+
+
+
+\newpage
+
+# A5 Normalize the database to the highest order normal form. 
+The codes for normalisation of the database is available in Appendix 10.3
+## Closed_deals
+
+### Normalisation to 1NF:  
+
+**Problem:** lead_behaviour_profile has multiple values in a particular cell. 
+
+**Solution:** Split it and make each cell contain a single value and set the composite key to {mql_id, lead_behaviour_profile}. 
+
+ 
+
+### Normalisation to 2NF:  
+
+**Problem:** The other attributes partially depend on the composite primary key. 
+
+**Solution:** lead_behaviour_profile is separated into a different table with mql_id to avoid partial dependency.  
+
+ 
+
+### Normalisation to 3NF:  
+
+**Problem:** Information regarding the seller’s business has a transitive dependency on the seller_id, not the mql_id. 
+
+**Solution:** Divide closed deals into two tables, closed_deals_seller_info and closed_deals, to separate the business information regarding the seller and the deal information. 
+
+## Order_reviews
+
+### Normalisation to 1NF:  
+
+**Solution:** Set to a composite key of {review_id, order_id}. No multiple values exist in a particular cell, so it is already 1NF. 
+
+ 
+
+### Normalisation to 2NF:  
+
+**Problem:** The review details depended only on the review_id, not the composite key of {review_id, order_id}.  
+
+**Solution:** Split order_reviews into olist_order_reviews and review_orders to avoid partial dependency. 
+
+ 
+
+### Normalisation to 3NF:   
+
+**Solution:** No transitive dependencies exist, and therefore 3NF has been reached. 
+
+ 
+
+
+## Orders
+
+### Normalisation to 1NF:  
+
+**Solution:** Set the primary key as {order_id}. No multiple values exist in a particular cell, so it is already 1NF. 
+
+ 
+
+### Normalisation to 2NF:  
+
+**Solution:** As there is no partial reliance, 2NF has been attained. 
+
+ 
+
+### Normalisation to 3NF:  
+
+**Problem:** Transitive dependence exists since a customer is assumed to be able to place multiple orders. {customer_id, order_delivered_carrier_date} -> {order_delivered_customer_date} 
+
+**Solution:** Split orders into two tables, orders and order_delivery. This was to separate delivery information from order information. 
+
+
+
+## Customers, sellers and geolocation 
+
+### Normalisation to 1NF:  
+
+**Solution:** setting the primary key to {customer_id}, {seller_id}, and composite key to {geolocation_lat, geolocation_lng, geolocation_city, geolocation_zip_code_prefix, geolocation_state} respectively. A particular cell has no multiple values, so it is already 1NF. 
+
+ 
+
+### Normalisation to 2NF:  
+
+**Solution:** As there is no partial reliance, 2NF has been attained. 
+
+ 
+
+### Normalisation to 3NF:  
+**Problem:** Using the same information, such as zip code, city, and state, in multiple tables was redundant. Transitive dependence is present between {zip_code} -> {city, state}. 
+
+**Solution:** Create a new table, namely zip_city_state to eliminate redundancy. This table exclusively retained unique combinations of zip code, city, and state while excluding duplicative data. Consequently, the city and state attributes in the customers, sellers, and geolocation tables were removed. Instead, the zip code attribute was utilised as a foreign key to establishing a connection to the zip_city_state table. 
+
+
+
+## Other tables
+
+Other tables are not split as they are in the highest normalisation form. 
+
+The most recent normalisation does a better job than the prior one at removing redundant data. Therefore, the data requires less storage space and reduce problems caused by data alteration. Moreover, less distinct and group by is used while looking up data, which speeds up queries. Superfluous attributes no longer constrain data modification, and data can be updated more quickly because of the discovery and separation of all partial and transitive dependencies.
+
+## Efficiency of the solution:
+
+We have successfully achieved 3NF by the discovery and separation of all partial and transitive dependencies. Now, there are less anomalies and redundancies in the database. Therefore, if Olist uses our solution they will have the benefit of a lower storage space requirement and a reduction in problems caused by data alteration. Moreover, queries will be more efficient as less distinct and group by statements will be required. However, there is room for further improvements in the products table. Instead of storing the name of the product, we could store a product number, which could link to the product_category_name_translation table, which can lead to a lower data storage space requirement. 
+
+\newpage
+## Post-Normalisation ER
+```{r, echo=FALSE, fig.cap="Post-Normalistion ER", out.width = '100%'}
+knitr::include_graphics("PostNormER.jpg")
+```
+
+The relationship sets for the entities post normalisation is represented in Appendix 10.4 andd the overview of datasets before and after normalisation is provided in Appendix 10.5
+
+```{r ,message=FALSE,warning=FALSE, include=FALSE}
+df_closed_deals <- RSQLite::dbGetQuery(my_connection,
+"SELECT *
+FROM closed_deals
+")
+
+```
+
+```{r ,message=FALSE,warning=FALSE, include=FALSE}
+df_closed_deals <- df_closed_deals %>% 
+  separate_rows(lead_behaviour_profile, sep = ", ")
+
+#now primary composite key is {mql_id, lead_behaviour_profile}
+df_closed_deals %>% group_by(mql_id, lead_behaviour_profile) %>% count() %>% arrange(desc(n))
+```
+
+```{r ,message=FALSE,warning=FALSE, include=FALSE}
+df_closed_deals_mql_lead_behav <- df_closed_deals %>% select(mql_id, lead_behaviour_profile)
+df_closed_deals <-  df_closed_deals %>% select(-lead_behaviour_profile)
+df_closed_deals <- distinct(df_closed_deals)
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+CREATE TABLE IF NOT EXISTS 'closed_deals_mql_lead_behav' (
+  'mql_id' VARCHAR(32),
+  'lead_behaviour_profile' VARCHAR(200),
+  PRIMARY KEY ('mql_id', 'lead_behaviour_profile'),
+  FOREIGN KEY ('mql_id') REFERENCES 'closed_deals'('mql_id')
+);
+
+```
+
+```{r ,message=FALSE,warning=FALSE, include=FALSE}
+RSQLite::dbWriteTable(my_connection,"closed_deals_mql_lead_behav",df_closed_deals_mql_lead_behav,append=TRUE)
+
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+ALTER TABLE closed_deals DROP  lead_behaviour_profile;
+```
+
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+
+CREATE TABLE IF NOT EXISTS 'closed_deals_seller_info' (
+  'seller_id' VARCHAR(32) PRIMARY KEY,
+  'business_segment' VARCHAR(200),
+  'has_company' BOOL,
+  'has_gtin' BOOL,
+  'average_stock' VARCHAR(10),
+  'business_type' VARCHAR(100),
+  'declared_product_catalog_size' INT,
+  'declared_monthly_revenue' INT NOT NULL
+);
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+
+INSERT INTO closed_deals_seller_info 
+SELECT seller_id, business_segment, has_company, has_gtin, average_stock, business_type, declared_product_catalog_size, declared_monthly_revenue
+FROM closed_deals;
+
+```
+
+```{sql, connection=my_connection,message=FALSE,warning=FALSE, include=FALSE}
+ALTER TABLE closed_deals DROP  business_segment;
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+ALTER TABLE closed_deals DROP  has_company;
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+ALTER TABLE closed_deals DROP  has_gtin;
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+ALTER TABLE closed_deals DROP  average_stock;
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+ALTER TABLE closed_deals DROP  business_type;
+```
+
+```{sql, connection=my_connection,message=FALSE,warning=FALSE, include=FALSE}
+ALTER TABLE closed_deals DROP  declared_product_catalog_size;
+```
+
+```{sql, connection=my_connection,message=FALSE,warning=FALSE, include=FALSE}
+ALTER TABLE closed_deals DROP  declared_monthly_revenue;
+```
+
+```{sql, connection=my_connection,message=FALSE,warning=FALSE, include=FALSE}
+SELECT * 
+FROM closed_deals_seller_info 
+```
+
+```{sql, connection=my_connection,message=FALSE,warning=FALSE, include=FALSE}
+SELECT order_id, review_id, count(DISTINCT(review_comment_message)) AS count_distinct
+FROM order_reviews
+GROUP BY review_id
+ORDER BY count_distinct DESC;
+```
+
+
+```{sql, connection=my_connection,message=FALSE,warning=FALSE, include=FALSE}
+CREATE TABLE IF NOT EXISTS 'review_details' (
+  'review_id' VARCHAR(32) PRIMARY KEY,
+  'review_score' INT NOT NULL,
+  'review_comment_title' VARCHAR(100),
+  'review_comment_message' TEXT,
+  'review_creation_date' TIMESTAMP NOT NULL,
+  'review_answer_timestamp' TIMESTAMP NOT NULL
+);
+```
+
+```{sql, connection=my_connection,message=FALSE,warning=FALSE, include=FALSE}
+CREATE TABLE IF NOT EXISTS 'review_orders' (
+  'review_id' VARCHAR(32) NOT NULL,
+  'order_id' VARCHAR(32) NOT NULL,
+  PRIMARY KEY ('order_id', 'review_id')
+  FOREIGN KEY ('order_id') REFERENCES orders('order_id')
+  FOREIGN KEY ('review_id') REFERENCES review_details('review_id')
+
+);
+```
+
+```{r ,message=FALSE,warning=FALSE, include=FALSE}
+df_order_review <- RSQLite::dbGetQuery(my_connection,
+"SELECT DISTINCT review_id, order_id
+FROM order_reviews
+")
+df_order_review <- distinct(df_order_review)
+
+
+```
+
+
+```{r ,message=FALSE,warning=FALSE, include=FALSE}
+df_review_info <- RSQLite::dbGetQuery(my_connection,
+"SELECT *
+FROM order_reviews
+")
+
+df_review_info <- df_review_info %>%  select(-(order_id))
+df_review_info <- distinct(df_review_info)
+df_review_info %>% group_by(review_id) %>% count() %>% arrange(desc(n))
+
+```
+
+```{r,message=FALSE,warning=FALSE, include=FALSE}
+RSQLite::dbWriteTable(my_connection,"review_details",df_review_info,append=TRUE)
+
+```
+
+```{r,message=FALSE,warning=FALSE, include=FALSE}
+RSQLite::dbWriteTable(my_connection,"review_orders",df_order_review,append=TRUE)
+
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+DROP TABLE IF EXISTS order_reviews;
+
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+SELECT order_id, COUNT(DISTINCT review_id) as count_distinct
+FROM review_orders
+GROUP BY order_id
+ORDER BY count_distinct DESC;
+```
+
+```{r ,message=FALSE,warning=FALSE, include=FALSE}
+df_orders <- as.data.frame(tbl(my_connection, "orders"))
+df_deliveries <- df_orders %>%  select(order_id, order_delivered_carrier_date, order_delivered_customer_date)
+df_orders <- df_orders %>%  select(-c(order_delivered_carrier_date, order_delivered_customer_date))
+
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+DROP TABLE IF EXISTS orders;
+
+```
+
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+CREATE TABLE IF NOT EXISTS 'orders' (
+  'order_id' VARCHAR(32) PRIMARY KEY,
+  'customer_id' VARCHAR(32) NOT NULL,
+  'order_status' VARCHAR(20) NOT NULL,
+  'order_purchase_timestamp' TIMESTAMP NOT NULL,
+  'order_approved_at' TIMESTAMP,
+  'order_estimated_delivery_date' DATE,
+  FOREIGN KEY ('customer_id') REFERENCES customer('customer_id')
+);
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+CREATE TABLE IF NOT EXISTS 'delivery' (
+  'order_id' INT PRIMARY KEY,
+  'order_delivered_carrier_date' TIMESTAMP,
+  'order_delivered_customer_date' TIMESTAMP
+);
+```
+
+```{r,message=FALSE,warning=FALSE, include=FALSE}
+RSQLite::dbWriteTable(my_connection,"orders",df_orders,append=TRUE)
+RSQLite::dbWriteTable(my_connection,"delivery",df_deliveries,append=TRUE)
+
+
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+SELECT geolocation_lat, geolocation_lng, count(distinct geolocation_zip_code_prefix ) as count_distinct
+FROM geolocation
+GROUP BY geolocation_lat, geolocation_lng
+ORDER BY count_distinct DESC;
+
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+SELECT customer_zip_code_prefix,  COUNT(DISTINCT(customer_state)) as distinct_state
+FROM customers
+GROUP BY customer_zip_code_prefix
+HAVING distinct_state > 1
+ORDER BY distinct_state DESC;
+
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+SELECT seller_zip_code_prefix,  COUNT(DISTINCT(seller_city)) as distinct_city
+FROM sellers
+GROUP BY seller_zip_code_prefix
+HAVING distinct_city > 1
+ORDER BY distinct_city DESC;
+
+```
+
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+SELECT seller_zip_code_prefix, seller_city,  COUNT(DISTINCT(seller_state)) as distinct_state
+FROM sellers
+GROUP BY seller_zip_code_prefix
+ORDER BY distinct_state DESC
+
+
+```
+
+```{sql, connection=my_connection,message=FALSE,warning=FALSE, include=FALSE}
+SELECT geolocation_zip_code_prefix,  COUNT(DISTINCT(geolocation_state)) as distinct_state
+FROM geolocation
+GROUP BY geolocation_zip_code_prefix
+HAVING distinct_state > 1
+ORDER BY distinct_state DESC
+
+
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+SELECT geolocation_state
+FROM geolocation
+WHERE geolocation_zip_code_prefix = "04011";
+
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+UPDATE geolocation
+SET geolocation_state = 'SP'
+WHERE geolocation_zip_code_prefix ="02116";
+```
+
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+DELETE FROM geolocation
+WHERE geolocation_zip_code_prefix = "04011" AND geolocation_state = 'AC';
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+UPDATE geolocation
+SET geolocation_state = 'RJ'
+WHERE geolocation_zip_code_prefix ="21550";
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+DELETE FROM geolocation
+WHERE geolocation_zip_code_prefix = "23056" AND geolocation_state = 'AC';
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+UPDATE geolocation
+SET geolocation_state = 'GO'
+WHERE geolocation_zip_code_prefix ="72915";
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+UPDATE geolocation
+SET geolocation_state = 'MT'
+WHERE geolocation_zip_code_prefix ="78557";
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+UPDATE geolocation
+SET geolocation_state = 'MS'
+WHERE geolocation_zip_code_prefix ="79750";
+```
+
+```{sql, connection=my_connection,message=FALSE,warning=FALSE, include=FALSE}
+UPDATE geolocation
+SET geolocation_state = 'PR'
+WHERE geolocation_zip_code_prefix ="80630";
+```
+
+
+```{r,message=FALSE,warning=FALSE, include=FALSE}
+sellers_to_clean <- RSQLite::dbGetQuery(my_connection,
+"SELECT seller_zip_code_prefix, seller_city,  COUNT(DISTINCT(seller_state)) as distinct_state
+FROM sellers
+GROUP BY seller_zip_code_prefix
+HAVING distinct_state > 1
+ORDER BY distinct_state DESC")
+```
+
+```{r,message=FALSE,warning=FALSE, include=FALSE}
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 85960] <- "PR"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 95076] <- "RS"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 89052] <- "SC"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 88301] <- "SC"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 88075] <- "SC"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 83321] <- "PR"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 83020] <- "PR"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 81560] <- "PR"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 81020] <- "PR"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 80240] <- "PR"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 44600] <- "BA"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 37795] <- "MG"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 37540] <- "MG"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 36010] <- "MG"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 31160] <- "MG"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 22783] <- "RJ"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 21210] <- "RJ"
+
+```
+
+```{r,message=FALSE,warning=FALSE, include=FALSE}
+sellers_df <- as.data.frame(tbl(my_connection, "sellers"))
+for (i in sellers_to_clean$seller_zip_code_prefix) {
+
+  sellers_df$seller_state[sellers_df$seller_zip_code_prefix == i] <- sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == i]
+}
+
+```
+
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+DROP TABLE IF EXISTS sellers;
+
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+CREATE TABLE IF NOT EXISTS 'sellers' (
+  'seller_id' VARCHAR(32) PRIMARY KEY,
+  'seller_zip_code_prefix' VARCHAR(5) NOT NULL,
+  'seller_city' VARCHAR(100) NOT NULL,
+  'seller_state' VARCHAR(2) NOT NULL
+);
+```
+
+```{r,message=FALSE,warning=FALSE, include=FALSE}
+RSQLite::dbWriteTable(my_connection,"sellers",sellers_df,append=TRUE)
+
+```
+
+```{r ,message=FALSE,warning=FALSE, include=FALSE}
+
+locations_sellers <- as.data.frame(tbl(my_connection, "sellers") %>% 
+                                     select(seller_zip_code_prefix, seller_city,seller_state))
+colnames(locations_sellers) <- c("zip_code_prefix", "city","state")
+locations_sellers <- distinct(locations_sellers)
+
+locations_sellers %>% group_by(zip_code_prefix) %>% count() %>% arrange(desc(n))
+```
+
+```{r,message=FALSE,warning=FALSE, include=FALSE}
+
+locations_customers <- as.data.frame(tbl(my_connection, "customers") %>% 
+                                     select(customer_zip_code_prefix,customer_city, customer_state))
+colnames(locations_customers) <- c("zip_code_prefix", "city" ,"state")
+locations_customers <- distinct(locations_customers)
+
+locations_customers %>% group_by(zip_code_prefix) %>% count() %>% arrange(desc(n))
+```
+
+```{r,message=FALSE,warning=FALSE, include=FALSE}
+cust_sellers_locs <- rbind(locations_sellers,locations_customers)
+cust_sellers_locs <- distinct(cust_sellers_locs)
+cust_sellers_locs %>% group_by(zip_code_prefix) %>% count() %>% arrange(desc(n))
+
+
+```
+
+
+```{r,message=FALSE,warning=FALSE, include=FALSE}
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 21320] <- "RJ"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 27277] <- "RJ"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 28810] <- "RJ"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 29101] <- "ES"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 31570] <- "MG"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 36512] <- "MG"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 71900] <- "DF"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 85301] <- "PR"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 86170] <- "PR"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 87360] <- "PR"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 88136] <- "SC"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 88790] <- "SC"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 89803] <- "SC"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 91520] <- "RS"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 95055] <- "RS"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 86076] <- "PR"
+
+cust_sellers_locs<- distinct(cust_sellers_locs)
+cust_sellers_locs %>% group_by(zip_code_prefix) %>% count() %>% arrange(desc(n))
+
+```
+
+
+```{r,message=FALSE,warning=FALSE, include=FALSE}
+geolocation_combinations <- as.data.frame(tbl(my_connection, "geolocation") %>% 
+                                     select(geolocation_zip_code_prefix,geolocation_city, geolocation_state))
+colnames(geolocation_combinations) <- c("zip_code_prefix","city", "state")
+```
+
+```{r,message=FALSE,warning=FALSE, include=FALSE}
+df_all_locations <- rbind(cust_sellers_locs,geolocation_combinations)
+df_all_locations <- df_all_locations[, c("zip_code_prefix","city", "state")]
+df_all_locations <- distinct(df_all_locations)
+df_all_locations$city = stri_trans_general(str = df_all_locations$city, id = "Latin-ASCII")
+df_all_locations <- distinct(df_all_locations)
+df_all_locations <- df_all_locations %>%
+  distinct(zip_code_prefix, .keep_all = TRUE)
+df_all_locations %>% group_by(zip_code_prefix) %>% count() %>% arrange(desc(n))
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+CREATE TABLE IF NOT EXISTS 'zip_state_city' (
+  'zip_code_prefix' VARCHAR(5) PRIMARY KEY,
+  'city' VARCHAR(100) NOT NULL, 
+  'state' VARCHAR(2) NOT NULL
+);
+
+```
+
+```{r,message=FALSE,warning=FALSE, include=FALSE}
+RSQLite::dbWriteTable(my_connection,"zip_state_city",df_all_locations,append=TRUE)
+
+```
+
+
+```{r,message=FALSE,warning=FALSE, include=FALSE}
+new_customer_df <- RSQLite::dbGetQuery(my_connection,
+"SELECT customer_id, customer_zip_code_prefix
+FROM customers; 
+")
+
+
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+DROP TABLE IF EXISTS customers;
+
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+CREATE TABLE IF NOT EXISTS 'customers' (
+  'customer_id' VARCHAR(32) PRIMARY KEY,
+  'customer_zip_code_prefix' VARCHAR(5) NOT NULL,
+  FOREIGN KEY ('customer_zip_code_prefix') REFERENCES 'zip_state'('zip_code_prefix')
+
+);
+```
+
+```{r,message=FALSE,warning=FALSE, include=FALSE}
+RSQLite::dbWriteTable(my_connection,"customers",new_customer_df,append=TRUE)
+
+```
+
+
+```{r,message=FALSE,warning=FALSE, include=FALSE}
+new_sellers_df <- RSQLite::dbGetQuery(my_connection,
+"SELECT seller_id, seller_zip_code_prefix
+FROM sellers
+")
+
+
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+DROP TABLE IF EXISTS sellers;
+
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+CREATE TABLE IF NOT EXISTS 'sellers' (
+  'seller_id' VARCHAR(32) PRIMARY KEY,
+  'seller_zip_code_prefix' VARCHAR(5) NOT NULL,
+  FOREIGN KEY ('seller_zip_code_prefix') REFERENCES 'zip_state'('zip_code_prefix')
+
+);
+```
+
+```{r,message=FALSE,warning=FALSE, include=FALSE}
+RSQLite::dbWriteTable(my_connection,"sellers",new_sellers_df,append=TRUE)
+
+```
+
+
+```{r,message=FALSE,warning=FALSE, include=FALSE}
+new_geolocation_df <- RSQLite::dbGetQuery(my_connection,
+"SELECT geolocation_zip_code_prefix, geolocation_lat,geolocation_lng
+FROM geolocation
+")
+new_geolocation_df <- distinct(new_geolocation_df)
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+DROP TABLE IF EXISTS geolocation;
+
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, include=FALSE}
+CREATE TABLE IF NOT EXISTS 'geolocation' (
+  'geolocation_lat' DECIMAL(3, 15) NOT NULL,
+  'geolocation_lng' DECIMAL(3, 15) NOT NULL,
+  'geolocation_zip_code_prefix' VARCHAR(5) NOT NULL,
+  PRIMARY KEY ('geolocation_lat', 'geolocation_lng', 'geolocation_zip_code_prefix'),
+  FOREIGN KEY ('geolocation_zip_code_prefix') REFERENCES 'zip_state'('zip_code_prefix')
+
+);
+```
+
+```{r,message=FALSE,warning=FALSE, include=FALSE}
+RSQLite::dbWriteTable(my_connection,"geolocation",new_geolocation_df,append=TRUE)
+
+```
+
+
+
+
+
+\newpage
+
+# A6 
+
+In the normalised version, five complex queries are provided and translated into equivalent R and dplyr pipes. The codes to get dataframes are represented in Appendix 10.6
+
+```{r,message=FALSE,warning=FALSE, include=FALSE}
+#Get dataframes of all tables from database for translate into R
+
+df_products <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM products")
+
+df_product_category_name_translation <- RSQLite::dbGetQuery(my_connection,
+"SELECT *FROM product_category_name_translation")
+
+df_marketing_qualified_leads <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM marketing_qualified_leads")
+
+df_closed_deals_seller_info  <- RSQLite::dbGetQuery(my_connection,
+"SELECT *FROM closed_deals_seller_info ")
+
+df_closed_deals  <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM closed_deals")
+
+df_Lead_behaviour <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM closed_deals_mql_lead_behav")
+
+new_geolocation_df <- RSQLite::dbGetQuery(my_connection,
+"SELECT *FROM geolocation;")
+
+new_sellers_df <- RSQLite::dbGetQuery(my_connection,
+"SELECT seller_id, seller_zip_code_prefix FROM sellers")
+
+new_customer_df <- RSQLite::dbGetQuery(my_connection,
+"SELECT customer_id, customer_zip_code_prefix FROM customers; ")
+
+df_review_details <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM review_details; ")
+
+df_review_orders <- RSQLite::dbGetQuery(my_connection,
+"SELECT *FROM review_orders; ")
+
+df_orders <- RSQLite::dbGetQuery(my_connection,
+"SELECT *FROM orders; ")
+
+df_deliveries <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM delivery; ")
+
+df_order_items <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM order_items; ")
+
+df_order_payments <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM order_payments; ")
+
+df_zip_state_city <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM zip_state_city; ")
+
+```
+
+## SQL Query 1
+This query provides insights into the performance of different business types and segments of sellers, to identify the ones with highest revenue and orders. Total revenue is the sum of price of each product and its associated shipping cost, that a company passes on to its customers. The query uses filter to exclude cancelled or unavailable orders, as they do not generated income to the business. However, it might be useful to include a time period in the query to provide a more granular view of revenue and order trends over time for each business segment. 
+```{sql, connection=my_connection, message=FALSE,warning=FALSE, fig.pos='H'}
+CREATE VIEW QUERY1 AS
+SELECT
+  cd.business_type,
+  cd.business_segment,
+  SUM(ot.price + ot.freight_value) AS Total_Revenue,
+  COUNT(DISTINCT o.order_id) AS Total_Orders
+FROM
+  orders o
+  LEFT JOIN order_items ot ON ot.order_id = o.order_id
+  INNER JOIN closed_deals_seller_info cd ON cd.seller_id = ot.seller_id
+WHERE o.order_status NOT IN ('unavailable', 'canceled')
+GROUP BY cd.business_type, cd.business_segment
+ORDER BY Total_Revenue DESC
+
+```
+
+## R Translation 1
+```{r,message=FALSE,warning=FALSE}
+query_1 <- new_customer_df %>%
+  left_join(df_orders, by = "customer_id") %>%
+  left_join(df_order_items, by = "order_id") %>%
+  inner_join(df_closed_deals_seller_info, by = "seller_id") %>%
+  filter(!order_status %in% c("unavailable", "canceled")) %>%
+  group_by(business_type, business_segment) %>%
+  summarise(Total_Revenue = sum(price + freight_value),
+            Total_Orders = n_distinct(order_id),
+            .groups = 'keep') %>%
+  ungroup() %>%
+  arrange(desc(Total_Revenue))
+```
+
+\newpage
+
+## SQL Query 2
+This query extracts the total number of closed deals, revenue generated per seller, and the average number of orders per seller. The results provide insights into the performance of sellers in different states. However, some closed deal sellers cannot be linked to any provided state due to data quality issues. Completing the data would result in a more efficient analysis. 
+```{sql, connection=my_connection,message=FALSE,warning=FALSE}
+CREATE VIEW QUERY2 AS
+SELECT 
+  z.state, 
+  COUNT(DISTINCT s.seller_id) AS Total_closed_deal_seller,
+  ROUND(SUM(ot.price + ot.freight_value) / COUNT(DISTINCT s.seller_id),0) 
+  AS Revenue_generated_per_seller,
+  COUNT(DISTINCT o.order_id) / COUNT(DISTINCT s.seller_id)  AS Order_per_seller
+FROM 
+  closed_deals_seller_info c
+  LEFT JOIN sellers s ON c.seller_id = s.seller_id
+  LEFT JOIN zip_state_city z ON z.zip_code_prefix = s.seller_zip_code_prefix
+  INNER JOIN order_items ot ON c.seller_id = ot.seller_id
+  INNER JOIN orders o on o.order_id = ot.order_id
+WHERE o.order_status NOT IN ('unavailable', 'canceled')
+GROUP BY z.state
+ORDER BY Total_closed_deal_seller DESC
+``` 
+
+
+## R Translation 2
+```{r,message=FALSE,warning=FALSE}
+#Translate into R
+query_2 <- df_closed_deals_seller_info %>%
+  left_join(new_sellers_df, by = "seller_id") %>%
+  left_join(df_zip_state_city, by = c("seller_zip_code_prefix" = "zip_code_prefix")) %>%
+  inner_join(df_order_items, by = "seller_id") %>%
+  inner_join(df_orders, by = "order_id") %>%
+  filter(!order_status %in% c("unavailable", "canceled")) %>%
+  group_by(state) %>%
+  summarise(Total_closed_deal_seller = n_distinct(seller_id),
+            Revenue_generated_per_seller = round(sum(price + freight_value) /
+                                                   n_distinct(seller_id)),
+            Order_per_seller = n_distinct(order_id) / n_distinct(seller_id)) %>%
+  arrange(desc(Total_closed_deal_seller)) 
+```
+
+\newpage
+
+## SQL Query 3
+This query extracts the total revenue, average revenue, and total number of orders for each month in 2017 and 2018. The results are grouped by year and month, the revenue is calculated by adding the price and freight value for each order. However, the analysis only includes total revenue data starting from 2018. Therefore, gathering additional data would allow us to better understand trends in SDR's sales performance over time. 
+```{sql, connection=my_connection,message=FALSE,warning=FALSE}
+CREATE VIEW QUERY3 AS
+SELECT
+  strftime('%Y', DATE(o.order_purchase_timestamp, 'unixepoch')) AS Year,
+  strftime('%m', DATE(o.order_purchase_timestamp, 'unixepoch')) AS Month,
+  SUM(ot.price + ot.freight_value) AS Total_Revenue,
+  ROUND(AVG(ot.price + ot.freight_value),2) AS Avg_Revenue,
+  COUNT(DISTINCT o.order_id) AS Total_Orders
+FROM
+  closed_deals cd
+  INNER JOIN order_items ot ON cd.seller_id = ot.seller_id
+  INNER JOIN orders o ON ot.order_id = o.order_id
+WHERE o.order_status NOT IN ('unavailable', 'canceled')
+AND Year IN ('2017','2018')
+GROUP BY Year, Month
+```
+## R Translation 3
+```{r,message=FALSE,warning=FALSE}
+#Translate into R
+query_3 <- df_closed_deals %>%
+  inner_join(df_order_items, by = "seller_id") %>%
+  inner_join(df_orders, by = "order_id") %>%
+  filter(!order_status %in% c("unavailable", "canceled"),
+         year(as_datetime(order_purchase_timestamp, origin = "1970-01-01"))
+         %in% c(2017, 2018)) %>%
+  mutate(Year = strftime(as_datetime(order_purchase_timestamp, origin = "1970-01-01")
+                         , format = "%Y"),
+         Month = strftime(as_datetime(order_purchase_timestamp, origin = "1970-01-01")
+                          , format = "%m")) %>%
+  group_by(Year, Month) %>%
+  summarise(Total_Revenue = sum(price + freight_value),
+            Avg_Revenue = mean(price + freight_value),
+            Total_Orders = n_distinct(order_id),
+            .groups = 'keep') %>%
+  ungroup()
+            
+```
+
+\newpage
+
+## SQL Query 4
+The query extracts the total revenue, total orders, and order per seller for each sales department representative (SDR). However, the analysis would be improved if we could identify the meaning behind each sales department representative ID number. 
+```{sql, connection=my_connection,message=FALSE,warning=FALSE}
+CREATE VIEW QUERY4 AS
+SELECT
+  cd.sdr_id AS Sales_department_representative,
+  COUNT(DISTINCT cd.seller_id) AS Total_sellers_in_SDR,
+  SUM(ot.price + ot.freight_value) AS Total_Revenue,
+  COUNT(DISTINCT ot.order_id) AS Total_Order,
+ COUNT(DISTINCT ot.order_id) / COUNT(DISTINCT cd.seller_id) AS Order_per_seller
+
+FROM closed_deals cd
+  INNER JOIN order_items ot ON cd.seller_id = ot.seller_id
+  INNER JOIN orders o ON ot.order_id = o.order_id
+WHERE o.order_status NOT IN ('unavailable', 'canceled')
+GROUP BY cd.sdr_id
+ORDER BY Total_Order DESC, Total_Revenue DESC
+```
+
+## R Translation 4
+```{r,message=FALSE,warning=FALSE}
+query_4 <- df_closed_deals %>%
+  inner_join(df_order_items, by = "seller_id") %>%
+  inner_join(df_orders, by = "order_id") %>%
+  filter(!order_status %in% c("unavailable", "canceled"))  %>%
+  group_by(sdr_id) %>%
+  summarise(
+    Total_sellers_in_SDR = n_distinct(seller_id),
+    Total_Revenue = sum(price + freight_value),
+    Total_Order = n_distinct(order_id),
+    Order_per_seller = n_distinct(order_id) / n_distinct(seller_id)
+  ) %>%
+  ungroup() %>%
+  mutate(SDR_Num = paste0("SDR_No.", row_number())) %>% 
+  arrange(desc(Total_Order), desc(Total_Revenue)) %>% 
+  select(SDR_Num, everything()) 
+```
+
+\newpage
+
+## SQL Query 5
+This query extracts the average time it takes to close a deal for each product category, as well as the total number of closed deals for each category. Here the assumption that each seller can sell only one product category is made. However, using the average time to close deals may not be accurate, as some sellers may perform better than others within each product category.
+
+```{sql connection=my_connection,message=FALSE,warning=FALSE}
+CREATE VIEW QUERY5 AS
+SELECT 
+  pct.product_category_name_english AS Product_name,
+  COUNT( DISTINCT c.mql_id) AS total_closed_deal_seller, 
+  ROUND(AVG(julianday(datetime(won_date, 'unixepoch')) - 
+  (first_contact_date + 2440587.5)), 0) AS Avg_time_to_close_deal
+FROM marketing_qualified_leads m
+LEFT JOIN closed_deals c on c.mql_id = m.mql_id
+INNER JOIN order_items ot ON ot.seller_id = c.seller_id
+INNER JOIN products p ON ot.product_id = p.product_id
+INNER JOIN product_category_name_translation pct 
+ON p.product_category_name = pct.product_category_name
+GROUP BY Product_name
+ORDER BY Avg_time_to_close_deal DESC
+
+```
+## R Translation 5
+```{r ,message=FALSE,warning=FALSE}
+query_5 <- df_marketing_qualified_leads %>%
+  left_join(df_closed_deals, by = "mql_id") %>%
+  inner_join(df_order_items, by = c("seller_id" = "seller_id")) %>%
+  inner_join(df_products, by = c("product_id" = "product_id")) %>%
+  inner_join(df_product_category_name_translation, 
+             by = c("product_category_name" = "product_category_name")) %>%
+  group_by(product_category_name_english) %>%
+  summarise(total_closed_deal_seller = n_distinct(mql_id),
+            Avg_time_to_close_deal = 
+              round(mean(as.numeric(
+                as.POSIXct(won_date,
+                           origin = "1970-01-01")) 
+                         - as.numeric(as.POSIXct(
+                           as.Date(first_contact_date, origin = "1970-01-01"),
+                           origin = "1970-01-01")), na.rm = TRUE) / 86400, 0))%>%
+  arrange(desc(Avg_time_to_close_deal))
+```
+
+The result of these queries can be found in the appendix 10.7
+
+\newpage
+
+## Visualisation 1
+The bar chart visualises the total revenue by business segment and type for the top 15 business segments.
+Transformation: 
+Total revenue is reordered  from the highest to lowest and the total revenue values within each level of the business_segment is summed up. 
+```{r,message=FALSE,warning=FALSE, include=TRUE }
+query_1 %>%  
+  mutate(business_segment = if_else(
+    business_segment == "construction_tools_house_garden",
+    "construction_tools", business_segment)) %>% 
+  slice(1:15) %>% 
+  ggplot(aes(x = reorder(business_segment, -Total_Revenue, sum),
+             y = Total_Revenue/1000, fill = business_type)) +
+  geom_bar(stat = "identity") +
+  scale_y_continuous(labels = comma) +
+  labs(x = "Business Segment", y = "Total Revenue (in thousands)",
+       fill = "Business Type", title = "Total Revenue by Business Segment and Type") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+```
+
+\newpage
+
+## Visualisation 2
+The bar chart visualizes the top 10 states ranked by revenue generated per closed deal seller. This can also identify which states are the most profitable for their seller operations.
+Transformation:
+The values are limited to the top 10 highest revenue generated per seller by state and then ranked in descending order i.e, highest to lowest. 
+```{r,message=FALSE,warning=FALSE, include=TRUE}
+state_labels <- c("BA: Bahia", "CE: Caera","ES: Espirito Santo", "GO: Goias",
+                  "MG: Minas Gerais","PR: Parana","RJ: Rio de Janeiro", "RR: Roraima",
+                  "SC: Santa Catarina" ,"SP: Sao Paulo")
+
+query_2 %>%
+  slice(1:10) %>%
+  ggplot(aes(x = reorder(state, -Revenue_generated_per_seller),
+             y = Revenue_generated_per_seller, fill= state)) +
+  geom_bar(stat = "identity") +
+  scale_y_continuous(labels = comma) +
+  labs(x = "State", y = "Revenue Generated per Seller",
+       title = "Top 10 States by Revenue Generated per Seller") +
+  scale_fill_manual(values = brewer.pal(10, "RdGy"),
+                    labels = state_labels, name = "State")+ 
+  theme_minimal() +
+  geom_text(aes(label=Revenue_generated_per_seller),
+            vjust=1.6, color="white", size=3.5)
+
+
+```
+\newpage
+
+## Visualisation 3
+The bar chart displays the total revenue earned each month in 2018 from all sales department representatives.This can help businesses identify the months in which they earn the most revenue, and the months where they may need to focus on improving their sales strategies. 
+Transformation:
+The revenue by Year and Month is grouped in order to represent the time series
+```{r,message=FALSE,warning=FALSE, include=TRUE}
+query_3 %>%
+  ggplot(aes(x = as.Date(paste(Year, Month, "01", sep = "-")),
+             y = Total_Revenue)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  scale_y_continuous(labels = comma, limits = c(0, 200000))+
+  scale_x_date(date_labels = "%b", date_breaks = "1 month") +
+  labs(x = "Month", y = "Total Revenue",
+       title = "Total Revenue by Month in 2018 Generated by all SDRs") +
+  theme_minimal() +
+  geom_text(aes(label=scales::comma(Total_Revenue)),
+            vjust=-1.5, color="black", size=3)
+            
+```
+\newpage
+
+## Visualisation 4
+This visualization shows the top 10 Sales Department Representatives (SDRs) with the lowest total revenue. By identifying these low performing SDRs, businesses can take steps to improve their sales performance and increase their revenue.
+Transformation:
+The total revenue data  is rearranged according to the requirement of the query and was limited to the top 5 SDRs. 
+```{r,message=FALSE,warning=FALSE, include=TRUE}
+#5 Lowest SDRs by Total Revenue
+figure4.1 <- query_4 %>%  arrange(Total_Revenue) %>%
+  slice(1:5) %>%
+  ggplot(aes(x = reorder(as.factor(SDR_Num), Total_Revenue),
+             y = Total_Revenue)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  labs(x = "Sales Department Representative",
+       y = "Total Revenue", title = "5 Lowest SDRs by Total Revenue") +
+  scale_y_continuous(labels = comma, limits = c(0, 200000)) +
+  theme_minimal() +
+  theme(axis.text.x=element_text(size=7, angle = 45, hjust = 0, vjust = 0.5),
+         axis.title.x=element_text(size=9)) +
+  geom_text(aes(label=scales::comma(Total_Revenue)),
+            vjust=0, color="black", size=2.5)
+
+#5 Highest SDRs by Total Revenue
+figure4.2 <- query_4 %>% slice(1:5) %>%
+  ggplot(aes(x = reorder(as.factor(SDR_Num), -Total_Revenue),
+             y = Total_Revenue)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  scale_y_continuous(labels = comma) +
+  labs(x = "Sales Department Representative", y = NULL,
+       title = "5 Highest SDRs by Total Revenue") +
+  theme_minimal() +
+  theme(axis.text.x=element_text(size=7,
+                                 angle = 45, hjust = 0, vjust = 0.5),
+         axis.title.x=element_text(size=9)) +
+  geom_text(aes(label=scales::comma(Total_Revenue)),
+            vjust=0, color="black", size=2.5)
+
+
+grid.arrange(
+  arrangeGrob(figure4.1, figure4.2,ncol=2))
+
+```
+\newpage
+
+## Visualisation 5
+The chart shows the average time it takes to close a deal by product category, with the top 10 categories. This helps identify which product categories take longer to close deals and may require additional attention to improve the sales process.
+Transformation: 
+The top 10 product categories are displayed to indicate the categories with highest time to close the deals. 
+```{r,message=FALSE,warning=FALSE, include=TRUE}
+query_5 %>%
+  slice(1:10) %>%  
+  ggplot(aes(x = reorder(product_category_name_english,
+                         -Avg_time_to_close_deal),
+             y = Avg_time_to_close_deal, fill = total_closed_deal_seller)) +
+  geom_bar(stat = "identity") +
+  scale_fill_viridis_c() +
+  labs(x = "Product Category",
+       y = "Average Time to Close Deal (days)",
+       title = "Average Time to Close Deal by Product Category") +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 90,
+                                   hjust = 1, vjust = 0.5)) +
+  geom_text(aes(label=Avg_time_to_close_deal),
+            vjust=1.6, color="white", size=3.5)
+```
+
+\newpage
+
+# Conclusion
+
+Conclusion:  
+
+Overall this report analysed the Olist datasets to provide valuable insights into sales, customer behavior and preferences, which can be used in future to develop targeted marketing strategies, improve customer experience, and ultimately increase sales. By leveraging these data analytics techniques, Olist can gain a competitive advantage in the marketplace. 
+
+\newpage
+
+# Appendix
+
+## Code to determine keys - A1
+
+### Load in data, preliminary analysis
+
+```{r loop,message=FALSE,warning=FALSE,attr.source='.numberLines'}
+
+input_files <- list.files(pattern="*.csv")
+
+prefix <- "olist_"
+suffix1 <- "_dataset.csv"
+suffix2 <- ".csv"
+
+table_name_list <- list() 
+
+df_keys <- setNames(data.frame(matrix(ncol = 4, nrow = 0)), 
+                    c("file_name", "col_name", "num_unique",
+                      "total_rows"))
+
+df_info <-  setNames(data.frame(matrix(ncol = 4, nrow = 0)), 
+                     c("file_name", "number_columns",
+                       "number_rows","first_col_primary_key"))
+
+
+for (file_name in input_files) {
+  this_file_contents <- readr::read_csv(file_name)
+  #ensure no duplicates
+  this_file_contents <- distinct(this_file_contents)
+  number_of_rows <- nrow(this_file_contents)
+  number_of_columns <- ncol(this_file_contents)
+
+
+  df_info[nrow(df_info)+1, 1] <- file_name
+  df_info[nrow(df_info), 2] <- number_of_columns
+  df_info[nrow(df_info), 3] <- number_of_rows
+  df_info[nrow(df_info), 4] <- nrow(unique(this_file_contents[,1]))==number_of_rows
+
+    for (i in 1:ncol(this_file_contents)){
+        df_keys[nrow(df_keys) + 1,1] <- file_name
+        df_keys[nrow(df_keys),2] <- colnames(this_file_contents[,i])
+    df_keys[nrow(df_keys), 3] <- nrow(unique(this_file_contents[,i]))
+    df_keys[nrow(df_keys), 4] <- nrow(this_file_contents)
+
+    } 
+  }
+
+
+
+df_keys$key <- ifelse(
+      df_keys$num_unique == df_keys$total_rows,
+      "Yes", "No")
+
+df_keys$key <- as.factor(df_keys$key)
+
+#datasets with no possible unique keys
+df_smry_no_keys<- df_keys %>%
+  count(file_name, key, .drop=FALSE) %>%
+  filter(key == "Yes" & n == 0)
+
+df_smry_keys<- df_keys %>%
+  count(file_name, key, .drop=FALSE) %>%
+  filter(key == "Yes" & n >= 1)
+
+```
+
+### Finding keys - Order Reviews
+
+```{r eval=TRUE,message=FALSE,warning=FALSE}
+df_order_reviews <- readr::read_csv("olist_order_reviews_dataset.csv")
+order_rev_dup_rows <-nrow(df_order_reviews[duplicated(df_order_reviews), ])
+order_rev_dup_rows
+#we see no duplicates
+
+df_order_reviews %>%
+  group_by(review_id, order_id) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count))
+
+```
+
+### Finding keys - Geolocation
+
+```{r eval=TRUE,message=FALSE,warning=FALSE}
+df_geoloc <- readr::read_csv("olist_geolocation_dataset.csv")
+geoloc_dup_rows <-nrow(df_geoloc[duplicated(df_geoloc), ])
+geoloc_dup_rows
+#remove duplicates
+df_geoloc <- distinct(df_geoloc)
+#Contained duplicate values
+
+#Finding key
+df_geoloc %>%
+  group_by(geolocation_lat,geolocation_lng, geolocation_city, 
+           geolocation_zip_code_prefix, geolocation_state) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count))
+
+```
+
+```{r message=FALSE,warning=FALSE, echo=FALSE}
+kable(df_info, format = "latex", col.names = c("File Name", "Number of Columns" ,"Number of Rows", "First column is primary key?"),caption= "A1", format.args = list(big.mark = ","), digits = 2)%>%
+  kable_styling(position = "left",
+      latex_options = c("repeat_header", "HOLD_position"),
+      )
+```
+
+\newpage
+
+## Codes for problem identification with datasets - A4
+
+### Empty values & Duplicates
+
+```{r ,message=FALSE,warning=FALSE}
+df_issues <- setNames(data.frame(matrix(ncol = 3, nrow = 0)), 
+                      c("file_name", "NA_count", "duplicates_count"))
+
+for (file_name in input_files) {
+  this_file_contents <- readr::read_csv(file_name)
+  #ensure no duplicates
+  df_issues[nrow(df_issues)+1, 1] <- file_name
+  df_issues[nrow(df_issues), 2] <- sum(is.na(this_file_contents))
+  df_issues[nrow(df_issues), 3] <- sum(duplicated(this_file_contents))
+  }
+```
+
+```{r,message=FALSE,warning=FALSE, echo=FALSE}
+kable(df_issues, format = "latex", row.names = FALSE, 
+      caption= "A4", format.args = list(big.mark = ","), digits = 2)%>%
+  kable_styling(position = "left",
+      latex_options = c("repeat_header", "HOLD_position"))
+```
+
+### Issues with columns
+
+```{r,message=FALSE,warning=FALSE, echo=FALSE}
+geolocation_df <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM geolocation; ")
+sellers_df <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM sellers")
+customer_df <- RSQLite::dbGetQuery(my_connection,
+"SELECT *FROM customers; ")
+df_example <- head(distinct(geolocation_df, geolocation_city),10)
+```
+
+```{r}
+print(paste0("Geolocation has ", 
+             sum(grepl('[^[:punct:]]', geolocation_df$geolocation_city))
+             , " punction characters in the city column"))
+```
+
+```{r}
+print(paste0("Sellers has ",
+             sum(grepl('[^[:punct:]]', sellers_df$seller_city))
+             , " punction characters in the city column"))
+```
+
+```{r,message=FALSE,warning=FALSE, echo=FALSE}
+kable(df_example, format = "latex",row.names = FALSE, 
+      caption= "A4 - Issues with City name examples", 
+      format.args = list(big.mark = ","), digits = 2)%>%
+  kable_styling(position = "center",
+      latex_options = c("HOLD_position"))
+```
+
+
+\newpage
+
+## Normalisation - A5
+
+### closed_deals
+
+```{r,message=FALSE,warning=FALSE, eval=FALSE}
+df_closed_deals <- RSQLite::dbGetQuery(my_connection,
+"SELECT *
+FROM closed_deals
+")
+
+```
+1NF
+```{r,message=FALSE,warning=FALSE, eval=FALSE}
+df_closed_deals <- df_closed_deals %>% 
+  separate_rows(lead_behaviour_profile, sep = ", ")
+
+#now primary composite key is {mql_id, lead_behaviour_profile}
+df_closed_deals %>% group_by(mql_id, lead_behaviour_profile) %>%
+  count() %>% arrange(desc(n))
+```
+
+2NF
+```{r,message=FALSE,warning=FALSE, eval=FALSE}
+df_closed_deals_mql_lead_behav <- df_closed_deals %>%
+  select(mql_id, lead_behaviour_profile)
+
+df_closed_deals <-  df_closed_deals %>%
+  select(-lead_behaviour_profile)
+
+df_closed_deals <- distinct(df_closed_deals)
+```
+
+```{sql, connection=my_connection,message=FALSE,warning=FALSE, eval=FALSE}
+CREATE TABLE IF NOT EXISTS 'closed_deals_mql_lead_behav' (
+  'mql_id' VARCHAR(32),
+  'lead_behaviour_profile' VARCHAR(200),
+  PRIMARY KEY ('mql_id', 'lead_behaviour_profile'),
+  FOREIGN KEY ('mql_id') REFERENCES 'closed_deals'('mql_id')
+);
+
+```
+
+```{r,message=FALSE,warning=FALSE, eval=FALSE}
+RSQLite::dbWriteTable(my_connection,
+                      "closed_deals_mql_lead_behav",
+                      df_closed_deals_mql_lead_behav,append=TRUE)
+
+```
+
+```{sql, connection=my_connection,message=FALSE,warning=FALSE, eval=FALSE}
+ALTER TABLE closed_deals DROP  lead_behaviour_profile;
+```
+
+3NF
+-Some of the information is related to the seller_id, as its information about the sellers business
+-Should be split into two tables to avoid functional dependencies and violate 3NF
+
+
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+
+CREATE TABLE IF NOT EXISTS 'closed_deals_seller_info' (
+  'seller_id' VARCHAR(32) PRIMARY KEY,
+  'business_segment' VARCHAR(200),
+  'has_company' BOOL,
+  'has_gtin' BOOL,
+  'average_stock' VARCHAR(10),
+  'business_type' VARCHAR(100),
+  'declared_product_catalog_size' INT,
+  'declared_monthly_revenue' INT NOT NULL
+);
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+
+INSERT INTO closed_deals_seller_info 
+SELECT 
+  seller_id, business_segment, has_company, has_gtin,
+  average_stock, business_type, 
+  declared_product_catalog_size, declared_monthly_revenue
+FROM closed_deals;
+
+```
+```{sql, connection=my_connection,message=FALSE,warning=FALSE, eval=FALSE}
+ALTER TABLE closed_deals DROP  business_segment;
+```
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+ALTER TABLE closed_deals DROP  has_company;
+```
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+ALTER TABLE closed_deals DROP  has_gtin;
+```
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+ALTER TABLE closed_deals DROP  average_stock;
+```
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+ALTER TABLE closed_deals DROP  business_type;
+```
+```{sql, connection=my_connection,message=FALSE,warning=FALSE, eval=FALSE}
+ALTER TABLE closed_deals DROP  declared_product_catalog_size;
+```
+```{sql, connection=my_connection,message=FALSE,warning=FALSE, eval=FALSE}
+ALTER TABLE closed_deals DROP  declared_monthly_revenue;
+```
+
+### order_reviews
+```{sql, connection=my_connection,message=FALSE,warning=FALSE, eval=FALSE}
+SELECT 
+  order_id, review_id, 
+  count(DISTINCT(review_comment_message)) AS count_distinct
+FROM order_reviews
+GROUP BY review_id
+ORDER BY count_distinct DESC;
+```
+
+-Partial dependency exists. Review content / time etc depends on review_id, not {review_id, order_id}. 
+
+
+
+```{sql, connection=my_connection,message=FALSE,warning=FALSE, eval=FALSE}
+CREATE TABLE IF NOT EXISTS 'review_details' (
+  'review_id' VARCHAR(32) PRIMARY KEY,
+  'review_score' INT NOT NULL,
+  'review_comment_title' VARCHAR(100),
+  'review_comment_message' TEXT,
+  'review_creation_date' TIMESTAMP NOT NULL,
+  'review_answer_timestamp' TIMESTAMP NOT NULL
+);
+```
+
+```{sql, connection=my_connection,message=FALSE,warning=FALSE, eval=FALSE}
+CREATE TABLE IF NOT EXISTS 'review_orders' (
+  'review_id' VARCHAR(32) NOT NULL,
+  'order_id' VARCHAR(32) NOT NULL,
+  PRIMARY KEY ('order_id', 'review_id')
+  FOREIGN KEY ('order_id') REFERENCES orders('order_id')
+  FOREIGN KEY ('review_id') REFERENCES review_details('review_id')
+
+);
+```
+
+```{r ,message=FALSE,warning=FALSE, eval=FALSE}
+df_order_review <- RSQLite::dbGetQuery(my_connection,
+"SELECT DISTINCT review_id, order_id
+FROM order_reviews
+")
+df_order_review <- distinct(df_order_review)
+
+
+```
+
+
+```{r ,message=FALSE,warning=FALSE, eval=FALSE}
+df_review_info <- RSQLite::dbGetQuery(my_connection,
+"SELECT *
+FROM order_reviews
+")
+
+df_review_info <- df_review_info %>%  select(-(order_id))
+df_review_info <- distinct(df_review_info)
+df_review_info %>% group_by(review_id) %>% count() %>% arrange(desc(n))
+
+```
+
+```{r,message=FALSE,warning=FALSE, eval=FALSE}
+RSQLite::dbWriteTable(my_connection,"review_details",
+                      df_review_info,append=TRUE)
+
+```
+```{r,message=FALSE,warning=FALSE, eval=FALSE}
+RSQLite::dbWriteTable(my_connection,"review_orders",
+                      df_order_review,append=TRUE)
+
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+DROP TABLE IF EXISTS order_reviews;
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+SELECT 
+  order_id, 
+  COUNT(DISTINCT review_id) as count_distinct
+FROM review_orders
+GROUP BY order_id
+ORDER BY count_distinct DESC;
+```
+
+### orders
+```{r ,message=FALSE,warning=FALSE, eval=FALSE}
+df_orders <- as.data.frame(tbl(my_connection, "orders"))
+
+df_deliveries <- df_orders %>%  
+  select(order_id, order_delivered_carrier_date,
+         order_delivered_customer_date)
+
+df_orders <- df_orders %>%  
+  select(-c(order_delivered_carrier_date,
+            order_delivered_customer_date))
+
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+DROP TABLE IF EXISTS orders;
+```
+
+
+#Create a new table for orders
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+CREATE TABLE IF NOT EXISTS 'orders' (
+  'order_id' VARCHAR(32) PRIMARY KEY,
+  'customer_id' VARCHAR(32) NOT NULL,
+  'order_status' VARCHAR(20) NOT NULL,
+  'order_purchase_timestamp' TIMESTAMP NOT NULL,
+  'order_approved_at' TIMESTAMP,
+  'order_estimated_delivery_date' DATE,
+  FOREIGN KEY ('customer_id') 
+  REFERENCES customer('customer_id')
+);
+```
+#Create a new table for deliveries
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+CREATE TABLE IF NOT EXISTS 'delivery' (
+  'order_id' INT PRIMARY KEY,
+  'order_delivered_carrier_date' TIMESTAMP,
+  'order_delivered_customer_date' TIMESTAMP
+);
+```
+
+```{r,message=FALSE,warning=FALSE, eval=FALSE}
+RSQLite::dbWriteTable(my_connection,
+                      "orders",df_orders,append=TRUE)
+RSQLite::dbWriteTable(my_connection,
+                      "delivery",df_deliveries,append=TRUE)
+```
+
+-Right now, each customer only has one order so there is no transitive dependency
+-But, logically, it would be possible for customers to make multiple orders. 
+-If a customer makes multiple orders, without splitting the tables, there could be a transitive dependency on the customer id between:
+{customer_id, order_delivered_carrier_date} -> {order_delivered_customer_date}
+
+
+### customers, sellers and geolocation 
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+SELECT 
+  geolocation_lat, geolocation_lng,
+  count(distinct geolocation_zip_code_prefix ) as count_distinct
+FROM geolocation
+GROUP BY geolocation_lat, geolocation_lng
+ORDER BY count_distinct DESC;
+
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+SELECT 
+  customer_zip_code_prefix,
+  COUNT(DISTINCT(customer_state)) as distinct_state
+FROM customers
+GROUP BY customer_zip_code_prefix
+HAVING distinct_state > 1
+ORDER BY distinct_state DESC;
+
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+SELECT 
+  seller_zip_code_prefix,
+  COUNT(DISTINCT(seller_city)) as distinct_city
+FROM sellers
+GROUP BY seller_zip_code_prefix
+HAVING distinct_city > 1
+ORDER BY distinct_city DESC;
+
+```
+
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+SELECT 
+  seller_zip_code_prefix, seller_city,
+  COUNT(DISTINCT(seller_state)) as distinct_state
+FROM sellers
+GROUP BY seller_zip_code_prefix
+ORDER BY distinct_state DESC
+
+
+```
+
+```{sql, connection=my_connection,message=FALSE,warning=FALSE, eval=FALSE}
+SELECT 
+  geolocation_zip_code_prefix,
+  COUNT(DISTINCT(geolocation_state)) as distinct_state
+FROM geolocation
+GROUP BY geolocation_zip_code_prefix
+HAVING distinct_state > 1
+ORDER BY distinct_state DESC
+
+
+```
+Need to clean geolocation too 
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+SELECT geolocation_state
+FROM geolocation
+WHERE geolocation_zip_code_prefix = "04011";
+
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+UPDATE geolocation
+SET geolocation_state = 'SP'
+WHERE geolocation_zip_code_prefix ="02116";
+```
+
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+DELETE FROM geolocation
+WHERE geolocation_zip_code_prefix = "04011" 
+  AND geolocation_state = 'AC';
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+UPDATE geolocation
+SET geolocation_state = 'RJ'
+WHERE geolocation_zip_code_prefix ="21550";
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+DELETE FROM geolocation
+WHERE geolocation_zip_code_prefix = "23056" 
+  AND geolocation_state = 'AC';
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+UPDATE geolocation
+SET geolocation_state = 'GO'
+WHERE geolocation_zip_code_prefix ="72915";
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+UPDATE geolocation
+SET geolocation_state = 'MT'
+WHERE geolocation_zip_code_prefix ="78557";
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+UPDATE geolocation
+SET geolocation_state = 'MS'
+WHERE geolocation_zip_code_prefix ="79750";
+```
+
+```{sql, connection=my_connection,message=FALSE,warning=FALSE, eval=FALSE}
+UPDATE geolocation
+SET geolocation_state = 'PR'
+WHERE geolocation_zip_code_prefix ="80630";
+```
+
+
+```{r,message=FALSE,warning=FALSE, eval=FALSE}
+sellers_to_clean <- RSQLite::dbGetQuery(my_connection,
+"SELECT seller_zip_code_prefix, seller_city,  COUNT(DISTINCT(seller_state)) as distinct_state
+FROM sellers
+GROUP BY seller_zip_code_prefix
+HAVING distinct_state > 1
+ORDER BY distinct_state DESC")
+```
+
+```{r,message=FALSE,warning=FALSE, eval=FALSE}
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 85960] <- "PR"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 95076] <- "RS"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 89052] <- "SC"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 88301] <- "SC"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 88075] <- "SC"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 83321] <- "PR"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 83020] <- "PR"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 81560] <- "PR"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 81020] <- "PR"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 80240] <- "PR"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 44600] <- "BA"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 37795] <- "MG"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 37540] <- "MG"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 36010] <- "MG"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 31160] <- "MG"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 22783] <- "RJ"
+sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == 21210] <- "RJ"
+
+```
+
+```{r,message=FALSE,warning=FALSE, eval=FALSE}
+sellers_df <- as.data.frame(tbl(my_connection, "sellers"))
+for (i in sellers_to_clean$seller_zip_code_prefix) {
+
+  sellers_df$seller_state[sellers_df$seller_zip_code_prefix == i] <- 
+    sellers_to_clean$state_correct[sellers_to_clean$seller_zip_code_prefix == i]
+}
+
+```
+
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+DROP TABLE IF EXISTS sellers;
+
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+CREATE TABLE IF NOT EXISTS 'sellers' (
+  'seller_id' VARCHAR(32) PRIMARY KEY,
+  'seller_zip_code_prefix' VARCHAR(5) NOT NULL,
+  'seller_city' VARCHAR(100) NOT NULL,
+  'seller_state' VARCHAR(2) NOT NULL
+);
+```
+
+```{r,message=FALSE,warning=FALSE, eval=FALSE}
+RSQLite::dbWriteTable(my_connection,"sellers",
+                      sellers_df,append=TRUE)
+
+```
+
+```{r ,message=FALSE,warning=FALSE, eval=FALSE}
+# Cleaning sellers , reviewing NAs, normalising
+tbl(my_connection, "sellers") %>%
+  group_by(seller_city) %>%
+  count() %>%
+  arrange(n)
+
+
+locations_sellers <- as.data.frame(
+  tbl(my_connection, "sellers") %>% 
+    select(seller_zip_code_prefix, seller_city,seller_state))
+
+colnames(locations_sellers) <- c("zip_code_prefix", "city","state")
+locations_sellers <- distinct(locations_sellers)
+
+locations_sellers %>% group_by(zip_code_prefix) %>%
+  count() %>% arrange(desc(n))
+```
+
+Sellers:
+- A lot of mispellings in seller city, some values will not match any value in geolocation table for the purposes of joining. 
+- We can attempt to find the closest match in geolocation cities, but this has proven unsuccessful 
+- We can leave the data as is or change the incorrect cities to NA (or manually try correct each one)
+
+
+```{r,message=FALSE,warning=FALSE, eval=FALSE}
+#Cleaning customers, reviewing NAs, normalising
+tbl(my_connection, "customers") %>%
+  group_by(customer_city) %>%
+  count() %>%
+  arrange(n)
+
+locations_customers <- as.data.frame(tbl(my_connection, "customers") %>% 
+                                     select(
+                                       customer_zip_code_prefix,
+                                       customer_city, customer_state))
+colnames(locations_customers) <- c("zip_code_prefix", "city" ,"state")
+locations_customers <- distinct(locations_customers)
+
+locations_customers %>% group_by(zip_code_prefix) %>% 
+  count() %>% arrange(desc(n))
+```
+
+Customers:
+-Similar situation to sellers table. Lots of the customer cities don't match any in the geolocation table. 
+-We can leave the data as is or change the incorrect cities to NA (or manually try correct each one)
+
+```{r,message=FALSE,warning=FALSE, eval=FALSE}
+cust_sellers_locs <- rbind(locations_sellers,locations_customers)
+#keep distinct combinations
+cust_sellers_locs <- distinct(cust_sellers_locs)
+
+cust_sellers_locs %>% group_by(zip_code_prefix) %>% 
+  count() %>% arrange(desc(n))
+```
+- some data in customers vs sellers maps to different states. 
+- This also needs cleaned
+
+```{r,message=FALSE,warning=FALSE, eval=FALSE}
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 21320] <- "RJ"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 27277] <- "RJ"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 28810] <- "RJ"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 29101] <- "ES"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 31570] <- "MG"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 36512] <- "MG"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 71900] <- "DF"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 85301] <- "PR"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 86170] <- "PR"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 87360] <- "PR"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 88136] <- "SC"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 88790] <- "SC"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 89803] <- "SC"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 91520] <- "RS"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 95055] <- "RS"
+cust_sellers_locs$state[cust_sellers_locs$zip_code_prefix == 86076] <- "PR"
+
+cust_sellers_locs<- distinct(cust_sellers_locs)
+
+cust_sellers_locs %>% 
+  group_by(zip_code_prefix) %>%
+  count() %>% arrange(desc(n))
+
+```
+
+
+
+```{r,message=FALSE,warning=FALSE, eval=FALSE}
+# Cleaning geolocation, reviewing NAs, normalising
+tbl(my_connection, "geolocation") %>%
+  group_by(geolocation_city) %>%
+  count() %>%
+  arrange(n)
+
+# Cleaning geolocation, reviewing NAs, normalising
+geolocation_combinations <- as.data.frame(
+  tbl(my_connection, "geolocation") %>% 
+    select(
+      geolocation_zip_code_prefix,
+      geolocation_city,
+      geolocation_state))
+
+colnames(geolocation_combinations) <- c("zip_code_prefix","city", "state")
+```
+
+```{r,message=FALSE,warning=FALSE, eval=FALSE}
+df_all_locations <- rbind(cust_sellers_locs,geolocation_combinations)
+df_all_locations <- df_all_locations[, c("zip_code_prefix","city", "state")]
+df_all_locations <- distinct(df_all_locations)
+df_all_locations$city = stri_trans_general(
+  str = df_all_locations$city, id = "Latin-ASCII")
+
+df_all_locations <- distinct(df_all_locations)
+#under assumption that first spelling is correct and duplicates are wrong
+df_all_locations <- df_all_locations %>%
+  distinct(zip_code_prefix, .keep_all = TRUE)
+df_all_locations %>% group_by(zip_code_prefix) %>%
+  count() %>% arrange(desc(n))
+```
+
+#Create a new table for zip_state
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+CREATE TABLE IF NOT EXISTS 'zip_state_city' (
+  'zip_code_prefix' VARCHAR(5) PRIMARY KEY,
+  'city' VARCHAR(100) NOT NULL, 
+  'state' VARCHAR(2) NOT NULL
+);
+
+```
+
+
+```{r,message=FALSE,warning=FALSE, eval=FALSE}
+RSQLite::dbWriteTable(my_connection,
+                      "zip_state_city",
+                      df_all_locations,append=TRUE)
+
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+SELECT 
+  COUNT(DISTINCT customer_id), 
+  COUNT(DISTINCT customer_unique_id), 
+  count(*)
+FROM customers
+
+```
+- Customer_unique_id is not actually unique, and is not used in any other tables, redudant
+
+```{r,message=FALSE,warning=FALSE, eval=FALSE}
+new_customer_df <- RSQLite::dbGetQuery(my_connection,
+"SELECT customer_id, customer_zip_code_prefix
+FROM customers; 
+")
+
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+#Delete old customer table
+DROP TABLE IF EXISTS customers;
+```
+#Create a new table for customers, without customer unique id since redundant 
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+CREATE TABLE IF NOT EXISTS 'customers' (
+  'customer_id' VARCHAR(32) PRIMARY KEY,
+  'customer_zip_code_prefix' VARCHAR(5) NOT NULL,
+  FOREIGN KEY ('customer_zip_code_prefix') REFERENCES 'zip_state'('zip_code_prefix')
+);
+```
+
+```{r,message=FALSE,warning=FALSE, eval=FALSE}
+RSQLite::dbWriteTable(my_connection,"customers",new_customer_df,append=TRUE)
+```
+
+```{r,message=FALSE,warning=FALSE, eval=FALSE}
+new_sellers_df <- RSQLite::dbGetQuery(my_connection,
+"SELECT seller_id, seller_zip_code_prefix
+FROM sellers
+")
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+DROP TABLE IF EXISTS sellers;
+```
+#Create a new table for sellers
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+CREATE TABLE IF NOT EXISTS 'sellers' (
+  'seller_id' VARCHAR(32) PRIMARY KEY,
+  'seller_zip_code_prefix' VARCHAR(5) NOT NULL,
+  FOREIGN KEY ('seller_zip_code_prefix') 
+  REFERENCES 'zip_state'('zip_code_prefix')
+);
+```
+
+```{r,message=FALSE,warning=FALSE, eval=FALSE}
+RSQLite::dbWriteTable(my_connection,"sellers",new_sellers_df,append=TRUE)
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+SELECT *
+FROM sellers
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+SELECT 
+  geolocation_zip_code_prefix, 
+  geolocation_lat,
+  geolocation_lng,
+  geolocation.geolocation_city
+FROM geolocation;
+```
+
+```{r,message=FALSE,warning=FALSE, eval=FALSE}
+new_geolocation_df <- RSQLite::dbGetQuery(my_connection,
+"SELECT geolocation_zip_code_prefix, geolocation_lat,geolocation_lng
+FROM geolocation
+")
+new_geolocation_df <- distinct(new_geolocation_df)
+```
+
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+DROP TABLE IF EXISTS geolocation;
+```
+
+#Create a new table for geolocation
+```{sql, connection=my_connection ,message=FALSE,warning=FALSE, eval=FALSE}
+CREATE TABLE IF NOT EXISTS 'geolocation' (
+  'geolocation_lat' DECIMAL(3, 15) NOT NULL,
+  'geolocation_lng' DECIMAL(3, 15) NOT NULL,
+  'geolocation_zip_code_prefix' VARCHAR(5) NOT NULL,
+  PRIMARY KEY ('geolocation_lat', 'geolocation_lng', 'geolocation_zip_code_prefix'),
+  FOREIGN KEY ('geolocation_zip_code_prefix')
+  REFERENCES 'zip_state'('zip_code_prefix')
+);
+```
+
+```{r,message=FALSE,warning=FALSE, eval=FALSE}
+RSQLite::dbWriteTable(my_connection,"geolocation",
+                      new_geolocation_df,append=TRUE)
+```
+
+\newpage
+
+## Post normalization relationship sets - A5
+
+| Entity 1 | Entity 2 | Cardinality | Entity Relation |
+| :------- | :------- | :----------: | :------------- |
+| Olist Customer | Olist Order | 1:N | Places/Placed by |
+| |
+| Olist Order | Olist Order items | 1:N | Contains |
+| |
+| Olist Order items | Olist Products | N:1 | Belongs to |
+| |
+| Olist Orders | Olist Order Payments | 1:N | Pays/Transacts |
+| |
+| Olist Orders | Review Order | M:N | Contains |
+| |
+| Olist Sellers | Olist Order Items | 1:N | Sells |
+| |
+| Olist Sellers | Zip_State_City | M:N | Located in |
+| |
+| Olist Customer | Zip_State_City | M:N | Located in |
+| |
+| Olist Sellers | Closed Deals Seller Info | 1:1 | Contains |
+| |
+| Olist Closed Deals | Olist Marketing Qualifies Deals | 1:1 | Led to |
+| |
+| Olist Product | Product Category Name Translation | 1:N | Defines | 
+| |
+| Close Deals Seller Info | Olist Closed Deals | 1:1 | Contains |
+| |
+| Lead Behaviour | Olist Closed Deals | M:N | Contains |
+| |
+| Zip_State_City | Olist Geolocation | M:N | Located in|
+| |
+| Olist Order Reviews | Review Order | M:N | Recieves |
+| |
+| Olist Order | Order Delivery | 1:1 | Delivered on |
+
+
+\newpage
+
+## Overview of datasets before and after normalisation - A5
+
+PRE NORMALIZATION 
+
+ 
+
+### orders table 
+
+orders (**order_id**, order_status, order_purchase_time, _customer_id_, order_delivered_carrier_date, order_approved_at, order_estimated_delivery_date, order_delivered_customer_date)  
+
+ 
+
+### order_payment table 
+
+order_payment(**(_order_id_, payment_sequential)**, payment_type, payment_value, payment_instalment)  
+
+ 
+
+### order_review table 
+
+order_reviews(**(_order_id_, review_id)**, review_score, review_comment_title, review_comment_message, review_creation_aate, review_answer_timestamp) 
+
+ 
+
+### order_items table 
+
+order_items(**(_order_id_, order_item_id,)**, _product_id_, _seller_id_, shipping_limit, price_freight_value)  
+
+ 
+
+### products table 
+
+products(**product_id**, product_weight_g, product_length_cm, product_height_cm, product_photos_quantity, product_width_cm, product_name_length, product_description_length, _product_category_name_)  
+
+ 
+
+### product_category_name_translation table 
+
+product_category_name_translation(**product_category_name**, product_category_name_english) 
+
+ 
+
+### customers table 
+
+customers(**customer_id**, customer_unique_id, city, state, _customer_zip_code_prefix_) 
+
+ 
+
+### sellers table 
+
+sellers(**seller_id**, seller_city, seller_state, _seller_zip_code_prefix_)  
+
+ 
+
+### geolocation table 
+
+geolocation(**(_geolocation_zip_code_prefix_, geolocation_lat, geolocation_lng, geolocation_city, geolocation_state)**) 
+
+ 
+
+### closed_deals table 
+
+closed_deals(**mql_id**, sr_id, sdr_id, average_stock, _seller_id_, lead_type, business_segments, declared_monthly_revenue, has_company, business_type, declared_product_catalog_size, gas_gtin, won_date, lead_behaviour_profile) 
+
+ 
+
+### marketing_qualified_leads table 
+
+marketing_qualified_leads(origin, **mql_id**, landing_page_id, first_contact_date) 
+
+ 
+
+ 
+
+AFTER NORMALIZATION 
+
+ 
+
+### olist_orders table 
+
+olist_orders(**_order_id_**, order_status, order_purchase_time, _customer_id_,  order_approved_at, order_estimated_delivery_date) 
+
+ 
+
+### order_delivery table 
+
+order_delivery(**order_id**,  order_delivered_carrier_date, order_delivered_customer_date) 
+
+ 
+
+### olist_order_payment table 
+
+olist_order_payment(**(_order_id_, payment_sequential)**, payment_type, payment_value, payment_instalment) 
+
+ 
+
+### olist_order_reviews table 
+
+olist_order_reviews(**review_id**, review_score, review_comment_title, review_comment_message, review_creation_aate, review_answer_timestamp) 
+
+ 
+
+### review_orders table 
+
+review_orders(**(order_id, _review_id_)**) 
+
+ 
+
+### olist_order_items table 
+
+olist_order_items(**(_order_id_, order_item_id,)**, _product_id_, _seller_id_, shipping_limit, price_freight_value) 
+
+ 
+
+### olist_products table 
+
+olist_products(**product_id**, product_weight_g, product_length_cm, product_height_cm, product_photos_quantity, product_width_cm, product_name_length, product_description_length, _product_category_name_) 
+
+ 
+
+### product_category_name_translation table 
+
+product_category_name_translation(**product_category_name**, product_category_name_english) 
+
+ 
+
+### olist_customers table 
+
+olist_customers(**customer_id**,  _customer_zip_code_prefix_) 
+
+ 
+
+### olist_sellers table 
+
+olist_sellers(**seller_id**, seller_zip_code_prefix_) 
+
+ 
+
+### olist_ geolocation table 
+
+olist_geolocation(**(geolocation_zip_code_prefix, geolocation_lat, geolocation_lng)**) 
+
+ 
+
+### zip_state_city table 
+
+zip_state_city(**geolocation_zip_code_prefix**, state, city) 
+
+ 
+
+### closed_deals_seller_info table 
+
+closed_deals_seller_info(**seller_id**, average_stock, business_segments, declared_monthly_revenue, has_company, business_type, declared_product_catalog_size, has_gtin) 
+
+ 
+
+### lead_behaviour table 
+
+lead_behaviour(**(mql_id, lead_behaviour_profile)**) 
+
+ 
+
+### olist_closed_deals table 
+
+olist_closed_deals(**mql_id**, _seller_id_, won_date, sr_id, sdr_id, lead_type) 
+
+ 
+
+### marketing_qualified_leads table 
+
+marketing_qualified_leads(origin, **mql_id**, landing_page_id, first_contact_date) 
+
+
+\newpage
+
+## Code to get dataframes of all tables - A6
+
+```{r,message=FALSE,warning=FALSE, include=TRUE}
+#Get dataframes of all tables from database
+
+df_products <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM products")
+
+df_product_category_name_translation <- RSQLite::dbGetQuery(my_connection,
+"SELECT *FROM product_category_name_translation")
+
+df_marketing_qualified_leads <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM marketing_qualified_leads")
+
+df_closed_deals_seller_info  <- RSQLite::dbGetQuery(my_connection,
+"SELECT *FROM closed_deals_seller_info ")
+
+df_closed_deals  <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM closed_deals")
+
+df_Lead_behaviour <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM closed_deals_mql_lead_behav")
+
+new_geolocation_df <- RSQLite::dbGetQuery(my_connection,
+"SELECT *FROM geolocation;")
+
+new_sellers_df <- RSQLite::dbGetQuery(my_connection,
+"SELECT seller_id, seller_zip_code_prefix FROM sellers")
+
+new_customer_df <- RSQLite::dbGetQuery(my_connection,
+"SELECT customer_id, customer_zip_code_prefix FROM customers; ")
+
+df_review_details <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM review_details; ")
+
+df_review_orders <- RSQLite::dbGetQuery(my_connection,
+"SELECT *FROM review_orders; ")
+
+df_orders <- RSQLite::dbGetQuery(my_connection,
+"SELECT *FROM orders; ")
+
+df_deliveries <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM delivery; ")
+
+df_order_items <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM order_items; ")
+
+df_order_payments <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM order_payments; ")
+
+df_zip_state_city <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM zip_state_city; ")
+
+```
+
+
+## Results from 5 complex queries - A6
+
+```{r, results='asis',  echo = FALSE}
+# Set maximum number of rows per table
+max_rows <- 10
+result1 <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM QUERY1")
+cat("### The table result from Query 1\n")
+knitr::kable(head(result1, max_rows))
+```
+
+```{r, results='asis',  echo = FALSE}
+# Query 2
+result2 <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM QUERY2")
+cat("### The table result from Query 2\n")
+knitr::kable(head(result2, max_rows))
+```
+
+```{r, results='asis',  echo = FALSE}
+# Query 3
+result3 <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM QUERY3")
+cat("### The table result from Query 3\n")
+knitr::kable(head(result3, max_rows))
+```
+
+```{r, results='asis',  echo = FALSE}
+# Query 4
+result4 <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM QUERY4")
+cat("### The table result from Query 4\n")
+knitr::kable(head(result4, max_rows))
+```
+
+```{r, results='asis',  echo = FALSE}
+# Query 5
+result5 <- RSQLite::dbGetQuery(my_connection,
+"SELECT * FROM QUERY5")
+cat("### The table result from Query 5\n")
+knitr::kable(head(result5, max_rows))
+```
+
+```{r,message=FALSE,warning=FALSE, eval=TRUE, include=FALSE}
+dbDisconnect(my_connection)
+```
+
